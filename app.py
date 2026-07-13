@@ -1,70 +1,124 @@
 import streamlit as st
 import joblib
-import re
 import nltk
+import re
+import os
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
 
-# Download necessary NLTK data (only if not already available in the deployment environment)
-# These should ideally be downloaded once during deployment setup or included in the docker image
-try:
-    nltk.data.find('corpora/stopwords')
-except nltk.downloader.DownloadError:
-    nltk.download('stopwords')
-try:
-    nltk.data.find('tokenizers/punkt')
-except nltk.downloader.DownloadError:
-    nltk.download('punkt')
-try:
-    nltk.data.find('corpora/wordnet')
-except nltk.downloader.DownloadError:
-    nltk.download('wordnet')
+# -------------------------------------------------
+# Page Configuration
+# -------------------------------------------------
+st.set_page_config(
+    page_title="Email Spam Detector",
+    page_icon="📧",
+    layout="centered"
+)
 
-stop_words = set(stopwords.words('english'))
+# -------------------------------------------------
+# Download NLTK Resources
+# -------------------------------------------------
+@st.cache_resource
+def download_nltk():
+    nltk.download("stopwords")
+    nltk.download("punkt")
+    nltk.download("wordnet")
+    nltk.download("omw-1.4")
+
+download_nltk()
+
+stop_words = set(stopwords.words("english"))
 lemmatizer = WordNetLemmatizer()
 
-# Load the model and vectorizer
-model = joblib.load('spam_detector_model.pkl')
-tfidf_vectorizer = joblib.load('tfidf_vectorizer.pkl')
+# -------------------------------------------------
+# Load Model
+# -------------------------------------------------
+@st.cache_resource
+def load_model():
 
-# Text preprocessing functions (should match the training preprocessing)
+    base_path = os.path.dirname(__file__)
+
+    model_path = os.path.join(base_path, "spam_detector_model.pkl")
+    vectorizer_path = os.path.join(base_path, "tfidf_vectorizer.pkl")
+
+    model = joblib.load(model_path)
+    vectorizer = joblib.load(vectorizer_path)
+
+    return model, vectorizer
+
+
+model, tfidf_vectorizer = load_model()
+
+# -------------------------------------------------
+# Text Preprocessing
+# -------------------------------------------------
 def clean_text(text):
     text = text.lower()
     text = re.sub(r'[^a-zA-Z\s]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-def remove_stopwords_func(text):
-    return ' '.join([word for word in str(text).split() if word not in stop_words])
 
-def tokenize_and_lemmatize(text):
+def remove_stopwords(text):
+    words = text.split()
+    words = [word for word in words if word not in stop_words]
+    return " ".join(words)
+
+
+def lemmatize(text):
     tokens = nltk.word_tokenize(text)
-    return [lemmatizer.lemmatize(word) for word in tokens]
+    tokens = [lemmatizer.lemmatize(word) for word in tokens]
+    return " ".join(tokens)
 
-# Streamlit App
-st.title("Email Spam Detector")
-st.write("Enter an email body below to check if it's spam or not.")
+# -------------------------------------------------
+# Prediction Function
+# -------------------------------------------------
+def predict_spam(text):
 
-email_input = st.text_area("Email Body")
+    text = clean_text(text)
+    text = remove_stopwords(text)
+    text = lemmatize(text)
+
+    vector = tfidf_vectorizer.transform([text])
+
+    prediction = model.predict(vector)
+
+    return prediction[0]
+
+# -------------------------------------------------
+# Streamlit UI
+# -------------------------------------------------
+
+st.title("📧 Email Spam Detection")
+
+st.write(
+    "Enter the email content below and the machine learning model will predict whether it is **Spam** or **Not Spam (Ham)**."
+)
+
+email = st.text_area(
+    "Email Content",
+    placeholder="Type or paste an email here..."
+)
 
 if st.button("Predict"):
-    if email_input:
-        # Preprocess the input email
-        cleaned_email = clean_text(email_input)
-        stopped_email = remove_stopwords_func(cleaned_email)
-        lemmatized_tokens = tokenize_and_lemmatize(stopped_email)
-        processed_email = ' '.join(lemmatized_tokens)
-        
-        # Transform using the loaded TF-IDF vectorizer
-        email_vectorized = tfidf_vectorizer.transform([processed_email])
-        
-        # Make prediction
-        prediction = model.predict(email_vectorized)
-        
-        # Display result
-        if prediction[0] == 1:
-            st.error("This email is likely SPAM!")
-        else:
-            st.success("This email is likely NOT SPAM.")
+
+    if email.strip() == "":
+        st.warning("Please enter an email.")
     else:
-        st.warning("Please enter some text to predict.")
+
+        result = predict_spam(email)
+
+        if result == 1:
+            st.error("🚫 Prediction: SPAM")
+        else:
+            st.success("✅ Prediction: NOT SPAM (HAM)")
+
+st.markdown("---")
+
+st.subheader("About")
+
+st.info(
+    "This application uses Natural Language Processing (NLP), "
+    "TF-IDF Vectorization, and a Machine Learning model "
+    "to classify emails as Spam or Not Spam."
+)
